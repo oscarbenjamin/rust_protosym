@@ -9,7 +9,7 @@ use pyo3::types::PyType;
 use pyo3::class::basic::CompareOp;
 
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Clone)]
 enum AtomValue {
     Str(String),
     Int(i64),
@@ -26,14 +26,35 @@ struct PyAtomType {
     atom_type: Arc<AtomType>,
 }
 
-#[pyclass]
-struct Atom {
+#[pyclass(name="Atom")]
+struct PyAtom {
     atom_type: Arc<AtomType>,
     value: AtomValue,
 }
 
+// We don't implement FromPyObject because we need to know whether we are
+// expecting str or int.
+impl AtomValue {
+    fn from_pyobject(typ: &str, value: PyObject, py: Python <'_>) -> PyResult<AtomValue> {
+        match typ {
+            "int" => Ok(AtomValue::Int(value.extract(py)?)),
+            "str" => Ok(AtomValue::Str(value.extract(py)?)),
+            _ => Err(PyTypeError::new_err("bad internal type."))
+        }
+    }
+}
+
+impl IntoPy<PyObject> for AtomValue {
+    fn into_py(self, py: Python <'_>) -> PyObject {
+        match self {
+            Self::Str(value) => value.into_py(py),
+            Self::Int(value) => value.into_py(py),
+        }
+    }
+}
+
 #[pymethods]
-impl Atom {
+impl PyAtom {
     fn __repr__(&self) -> String {
         let name = &self.atom_type.name;
         match &self.value {
@@ -56,10 +77,7 @@ impl Atom {
 
     #[getter]
     fn value(&self, py: Python<'_>) -> PyObject {
-        match &self.value {
-            AtomValue::Str(string) => string.into_py(py),
-            AtomValue::Int(integer) => integer.into_py(py),
-        }
+        self.value.clone().into_py(py)
     }
 
     fn __richcmp__(&self, other: &Self, op: CompareOp, py: Python<'_>) -> PyObject {
@@ -79,21 +97,15 @@ impl Atom {
 
 #[pymethods]
 impl PyAtomType {
-		#[new]
+    #[new]
     fn py_new(name: String, typ: &PyType) -> PyResult<Self> {
 
-        if let Ok(type_name) = typ.name() {
-            if type_name == "int" {
-                Ok(PyAtomType { atom_type: Arc::new(
-                  AtomType { name: name , typ: "int".to_string() }) } )
-            } else if type_name == "str" {
-                Ok(PyAtomType { atom_type: Arc::new(
-                  AtomType { name: name , typ: "str".to_string() }) } )
-            } else {
-                Err(PyValueError::new_err("typ must be int or str."))
-            }
-        } else {
-            Err(PyTypeError::new_err("typ must be a type."))
+        let typ = typ.name()?;
+        let atom_type = Arc::new(AtomType{ name, typ: typ.to_string() });
+
+        match typ {
+            "int" | "str" => Ok(PyAtomType{ atom_type }),
+            _ => Err(PyValueError::new_err("typ must be int or str.")),
         }
     }
 
@@ -115,43 +127,17 @@ impl PyAtomType {
         self.atom_type.name.clone()
     }
 
-    fn from_int(&self, value: i64) -> PyResult<Atom> {
-        if self.atom_type.typ == "int" {
-            Ok(Atom { atom_type: self.atom_type.clone() , value: AtomValue::Int(value) } )
-        } else {
-            Err(PyTypeError::new_err("value must be of type int."))
-        }
-    }
-
-    fn from_str(&self, value: String) -> PyResult<Atom> {
-        if self.atom_type.typ == "str" {
-            Ok(Atom { atom_type: self.atom_type.clone() , value: AtomValue::Str(value) } )
-        } else {
-            Err(PyTypeError::new_err("value must be of type int."))
-        }
-    }
-
-    fn __call__(&self, value: PyObject) -> PyResult<Atom> {
-        if self.atom_type.typ == "int" {
-            Python::with_gil(|py| -> PyResult<Atom> {
-                let value_i64 = value.extract(py)?;
-                self.from_int(value_i64)
-            })
-        } else if self.atom_type.typ == "str" {
-            Python::with_gil(|py| -> PyResult<Atom> {
-                let value_str = value.extract(py)?;
-                self.from_str(value_str)
-            })
-        } else {
-            Err(PyTypeError::new_err("bad internal type."))
-        }
+    fn __call__(&self, value: PyObject, py: Python<'_>) -> PyResult<PyAtom> {
+        let atom_type = self.atom_type.clone();
+        let value = AtomValue::from_pyobject(&atom_type.typ, value, py)?;
+        Ok(PyAtom{ atom_type, value })
     }
 }
 
 /// A Python module implemented in Rust.
 #[pymodule]
 fn rust_protosym(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_class::<Atom>()?;
+    m.add_class::<PyAtom>()?;
     m.add_class::<PyAtomType>()?;
     Ok(())
 }
