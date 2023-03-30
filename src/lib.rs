@@ -21,13 +21,8 @@ struct AtomType {
     typ: String,
 }
 
-#[pyclass(name="AtomType")]
-struct PyAtomType {
-    atom_type: Arc<AtomType>,
-}
-
-#[pyclass(name="Atom")]
-struct PyAtom {
+#[derive(PartialEq, Eq)]
+struct Atom {
     atom_type: Arc<AtomType>,
     value: AtomValue,
 }
@@ -53,44 +48,54 @@ impl IntoPy<PyObject> for AtomValue {
     }
 }
 
+#[pyclass(name="AtomType")]
+struct PyAtomType {
+    atom_type: Arc<AtomType>,
+}
+
+#[pyclass(name="Atom")]
+struct PyAtom {
+    atom: Arc<Atom>,
+}
+
 #[pymethods]
 impl PyAtom {
     fn __repr__(&self) -> String {
-        let name = &self.atom_type.name;
-        match &self.value {
-            AtomValue::Str(string) => format!("{}('{}')", name, string),
-            AtomValue::Int(integer) => format!("{}({})", name, integer),
+        let name = &self.atom.atom_type.name;
+        match &self.atom.value {
+            AtomValue::Str(val) => format!("{}('{}')", name, val),
+            AtomValue::Int(val) => format!("{}({})", name, val),
         }
     }
 
     fn __str__(&self) -> String {
-        match &self.value {
-            AtomValue::Str(string) => format!("{}", string),
-            AtomValue::Int(integer) => format!("{}", integer),
+        match &self.atom.value {
+            AtomValue::Str(val) => format!("{}", val),
+            AtomValue::Int(val) => format!("{}", val),
         }
     }
 
     #[getter]
     fn atom_type(&self) -> PyAtomType {
-        PyAtomType { atom_type: self.atom_type.clone() }
+        PyAtomType { atom_type: self.atom.atom_type.clone() }
     }
 
     #[getter]
     fn value(&self, py: Python<'_>) -> PyObject {
-        self.value.clone().into_py(py)
+        self.atom.value.clone().into_py(py)
     }
 
     fn __richcmp__(&self, other: &Self, op: CompareOp, py: Python<'_>) -> PyObject {
         match op {
-            CompareOp::Eq => (self.atom_type == other.atom_type && self.value == other.value).into_py(py),
-            CompareOp::Ne => (self.atom_type != other.atom_type || self.value != other.value).into_py(py),
+            CompareOp::Eq => (self.atom == other.atom).into_py(py),
+            CompareOp::Ne => (self.atom != other.atom).into_py(py),
             _ => py.NotImplemented(),
         }
     }
 
     fn __hash__(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
-        self.value.hash(&mut hasher);
+        self.atom.value.hash(&mut hasher);
         hasher.finish()
     }
 }
@@ -130,7 +135,8 @@ impl PyAtomType {
     fn __call__(&self, value: PyObject, py: Python<'_>) -> PyResult<PyAtom> {
         let atom_type = self.atom_type.clone();
         let value = AtomValue::from_pyobject(&atom_type.typ, value, py)?;
-        Ok(PyAtom{ atom_type, value })
+        let atom = Arc::new(Atom{ atom_type, value });
+        Ok(PyAtom{ atom })
     }
 }
 
