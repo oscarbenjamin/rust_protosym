@@ -30,6 +30,7 @@ venv/
 .installed.cfg
 *.egg
 Cargo.lock
+tmp/
 
 # Installer logs
 pip-log.txt
