@@ -28,7 +28,7 @@ use std::fmt;
 use std::iter::once;
 use std::sync::{Arc, Mutex};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use pyo3::prelude::*;
@@ -192,6 +192,13 @@ impl Tree {
         Tree { node }
     }
 
+    fn children(&self) -> Vec<Tree> {
+        match &*self.node {
+            TreeNode::Node(children) => children.clone(),
+            TreeNode::Atom(_) => vec![],
+        }
+    }
+
 }
 
 
@@ -302,6 +309,84 @@ impl fmt::Display for Tree {
         Ok(())
     }
 
+}
+
+
+// --------------------------------------------- algorithms
+
+
+fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
+
+    let reverse_pop_head = |children: &mut Vec<Tree>| {
+        children.reverse();
+        if ! heads {
+            children.pop(); // pop off the head (from end because reversed).
+        }
+    };
+
+    let mut seen = HashSet::new();
+    let mut expressions = vec![];
+    let mut stack = vec![];
+
+    let mut children = expression.children();
+    reverse_pop_head(&mut children);
+    stack.push((expression, children));
+
+    while ! stack.is_empty() {
+        // Pop the next expression and its unprocessed children off the stack.
+        let (expression, mut children) = stack.pop().unwrap();
+
+        // Find the first unseen child (if any).
+        let mut unseen_child = None;
+
+        while ! children.is_empty() {
+
+            let child = children.pop().unwrap();
+
+            if ! seen.contains(&child) {
+                seen.insert(child.clone());
+                unseen_child = Some(child);
+                break;
+            }
+        }
+
+        // Either recurse or push to output.
+        match unseen_child {
+            Some(child) => {
+                // Push this expression and its remaining children to the stack
+                // and then push the unseen child and its children to the
+                // stack. When unseen child is processed we will return to the
+                // current expression and its remaining children.
+                let mut grand_children = child.children();
+                reverse_pop_head(&mut grand_children);
+                stack.push((expression, children));
+                stack.push((child, grand_children));
+            },
+            None => {
+                // There were no unseen children so push this expression to the
+                // output list.
+                expressions.push(expression);
+            }
+        }
+    }
+
+    // This should now be a list of all subexpressions in topological order so
+    // that every expression appears after each of its children.
+    expressions
+}
+
+#[pyfunction(name = "topological_sort")]
+#[pyo3(signature = (expression, heads=false))]
+fn topological_sort_py(
+        expression: PyTreeExpr,
+        heads: bool,
+        py: Python <'_>
+    ) -> PyResult<Vec<PyObject>> {
+
+    topological_sort(expression.tree, heads)
+        .into_iter()
+        .map(|x| pytree_expr_from_treeexpr(x, py))
+        .collect()
 }
 
 
@@ -680,5 +765,6 @@ fn rust_protosym(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTreeExpr>()?;
     m.add_class::<PyTreeAtom>()?;
     m.add_class::<PyTreeNode>()?;
+    m.add_function(wrap_pyfunction!(topological_sort_py, m)?)?;
     Ok(())
 }

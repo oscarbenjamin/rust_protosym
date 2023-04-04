@@ -1,1 +1,1 @@
-from .rust_protosym import Atom, AtomType, TreeExpr, TreeAtom, TreeNode
+from .rust_protosym import Atom, AtomType, TreeExpr, TreeAtom, TreeNode, topological_sort
