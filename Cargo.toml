@@ -10,3 +10,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.18.1"
+internment = { version = "0.7.0", features = ["arc"] }
