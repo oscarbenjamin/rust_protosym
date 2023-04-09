@@ -376,6 +376,27 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
 }
 
 
+fn topological_split(expr: Tree) -> (Vec<Tree>, HashSet<Tree>, Vec<Tree>) {
+
+    let subexpressions = topological_sort(expr, false);
+
+    let mut atoms = vec![];
+    let mut heads = HashSet::new();
+    let mut nodes = vec![];
+
+    for subexpr in subexpressions {
+        match &*subexpr.node {
+            TreeNode::Atom(_) => atoms.push(subexpr),
+            TreeNode::Node(children) => {
+                heads.insert(children[0].clone());
+                nodes.push(subexpr);
+            }
+        }
+    }
+    (atoms, heads, nodes)
+}
+
+
 // --------------------------------------------- AtomValue <--> Python
 
 // We don't implement FromPyObject because we need to know whether we are
@@ -728,6 +749,12 @@ fn topological_sort_py( expression: PyTreeExpr, heads: bool) -> Vec<Tree> {
 }
 
 
+#[pyfunction(name = "topological_split")]
+fn topological_split_py( expression: PyTreeExpr) -> (Vec<Tree>, HashSet<Tree>, Vec<Tree>) {
+    topological_split(expression.tree)
+}
+
+
 // ------------------------------- Initialise the module object.
 
 
@@ -739,5 +766,6 @@ fn rust_protosym(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTreeAtom>()?;
     m.add_class::<PyTreeNode>()?;
     m.add_function(wrap_pyfunction!(topological_sort_py, m)?)?;
+    m.add_function(wrap_pyfunction!(topological_split_py, m)?)?;
     Ok(())
 }
