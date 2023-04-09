@@ -375,18 +375,40 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
     expressions
 }
 
+
+// Create a Python PyTreeExpr from a rust Tree. Needed because the rust tree
+// might need to become a PyTreeAtom or a PyTreeNode. Constructing an instance
+// of a sub-pyclass is awkward in pyo3. Ideally we should just get rid of the
+// subclasses since they don't really do anything useful here in the rust code
+// but they are there to replicate the exact classes used in the Python code.
+// Maybe the Python code should be changed to use a single type like Tree as
+// well.
+
+impl IntoPy<PyObject> for Tree {
+
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        let initializer: PyClassInitializer<PyTreeExpr> = PyClassInitializer::from(
+            PyTreeExpr { tree: self.clone() }
+        );
+        let object = match *self.node {
+            TreeNode::Atom(_) => {
+                let initializer = initializer.add_subclass(PyTreeAtom {});
+                PyCell::new(py, initializer).unwrap().to_object(py)
+            },
+            TreeNode::Node(_) => {
+                let initializer = initializer.add_subclass(PyTreeNode {});
+                PyCell::new(py, initializer).unwrap().to_object(py)
+            }
+        };
+        object
+    }
+}
+
+
 #[pyfunction(name = "topological_sort")]
 #[pyo3(signature = (expression, heads=false))]
-fn topological_sort_py(
-        expression: PyTreeExpr,
-        heads: bool,
-        py: Python <'_>
-    ) -> PyResult<Vec<PyObject>> {
-
+fn topological_sort_py( expression: PyTreeExpr, heads: bool) -> Vec<Tree> {
     topological_sort(expression.tree, heads)
-        .into_iter()
-        .map(|x| pytree_expr_from_treeexpr(x, py))
-        .collect()
 }
 
 
@@ -598,50 +620,6 @@ impl PyAtomType {
 }
 
 
-// Convert a Python tuple of PyTreeExpr to a Tree.
-
-fn vec_tree_expr_from_pytuple(args: &PyTuple) -> PyResult<Vec<Tree>> {
-
-    let args: Result<Vec<PyTreeExpr>, _> = args
-        .into_iter()
-        .map(|x| x.extract())
-        .collect();
-
-    let args = args?.into_iter().map(|x| x.tree.clone()).collect();
-
-    Ok(args)
-}
-
-
-// Create a Python PyTreeExpr from a rust Tree. Needed because the rust tree
-// might need to become a PyTreeAtom or a PyTreeNode. Constructing an instance
-// of a sub-pyclass is awkward in pyo3. Ideally we should just get rid of the
-// subclasses since they don't really do anything useful here in the rust code
-// but they are there to replicate the exact classes used in the Python code.
-// Maybe the Python code should be changed to use a single type like Tree as
-// well.
-
-fn pytree_expr_from_treeexpr(tree: Tree, py: Python<'_>) -> PyResult<PyObject> {
-
-    let initializer: PyClassInitializer<PyTreeExpr> = PyClassInitializer::from(
-        PyTreeExpr { tree: tree.clone() }
-    );
-
-    let object = match *tree.node {
-        TreeNode::Atom(_) => {
-            let initializer = initializer.add_subclass(PyTreeAtom {});
-            PyCell::new(py, initializer)?.to_object(py)
-        },
-        TreeNode::Node(_) => {
-            let initializer = initializer.add_subclass(PyTreeNode {});
-            PyCell::new(py, initializer)?.to_object(py)
-        }
-    };
-
-    Ok(object)
-}
-
-
 impl PyTreeExpr {
 
     fn from_pyatom(atom: PyAtom) -> PyTreeExpr {
@@ -654,7 +632,7 @@ impl PyTreeExpr {
 impl ToPyObject for PyTreeExpr {
 
     fn to_object(&self, py: Python<'_>) -> PyObject {
-        pytree_expr_from_treeexpr(self.tree.clone(), py).unwrap()
+        self.clone().into_py(py)
     }
 
 }
@@ -668,12 +646,11 @@ impl PyTreeExpr {
 
     #[pyo3(signature = (*args))]
     fn __call__(&self, args: &PyTuple, py: Python<'_>) -> PyResult<PyObject> {
-        let args = vec_tree_expr_from_pytuple(args)?;
+        let args: Vec<PyTreeExpr> = args.extract()?;
+        let args = args.into_iter().map(|x| x.tree);
         let children = once(self.tree.clone()).chain(args);
         let tree = Tree::from_children(children.map(|x| x.clone()));
-        let object = pytree_expr_from_treeexpr(tree, py)?;
-
-        Ok(object)
+        Ok(tree.into_py(py))
     }
 
     #[getter]
@@ -684,12 +661,7 @@ impl PyTreeExpr {
                 vec![]
             },
             TreeNode::Node(children) => {
-                let children: PyResult<Vec<PyObject>> = children
-                    .into_iter()
-                    .map(|x| (*x).clone())
-                    .map(|x| pytree_expr_from_treeexpr(x, py))
-                    .collect();
-                children?
+                children.into_iter().map(|x| x.clone().into_py(py)).collect()
             },
         };
 
@@ -747,7 +719,8 @@ impl PyTreeNode {
     #[new]
     #[pyo3(signature = (*args))]
     fn py_new(args: &PyTuple) -> PyResult<(Self, PyTreeExpr)> {
-        let children = vec_tree_expr_from_pytuple(args)?;
+        let children: Vec<PyTreeExpr> = args.extract()?;
+        let children = children.into_iter().map(|x| x.tree);
         let tree = Tree::from_children(children);
         Ok((PyTreeNode {}, PyTreeExpr { tree }))
     }
