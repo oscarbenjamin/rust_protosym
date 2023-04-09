@@ -1,5 +1,6 @@
 from .rust_protosym import (Atom, AtomType, TreeExpr, TreeAtom, TreeNode,
-                            topological_sort, topological_split)
+                            ForwardGraph, topological_sort, topological_split,
+                            forward_graph)
 
 
 __all__ = [
@@ -8,6 +9,8 @@ __all__ = [
     "TreeExpr",
     "TreeAtom",
     "TreeNode",
+    "ForwardGraph",
     "topological_sort",
     "topological_split",
+    "forward_graph",
 ]

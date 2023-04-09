@@ -97,6 +97,14 @@ struct Tree {
 }
 
 
+#[derive(PartialEq, Eq, Clone)]
+struct ForwardGraph {
+    atoms: Vec<Tree>,
+    heads: HashSet<Tree>,
+    operations: Vec<(Tree, Vec<usize>)>,
+}
+
+
 // ------------------- Structs for the Python objects
 
 
@@ -133,6 +141,13 @@ struct PyTreeAtom {}
 #[pyclass(extends=PyTreeExpr, name="TreeNode")]
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct PyTreeNode {}
+
+
+#[pyclass(name="ForwardGraph")]
+#[derive(PartialEq, Eq, Clone)]
+struct PyForwardGraph {
+    forward_graph: ForwardGraph,
+}
 
 
 // ---------------------------------------- Construct Interned Tree
@@ -197,6 +212,15 @@ impl Tree {
             TreeNode::Node(children) => children.clone(),
             TreeNode::Atom(_) => vec![],
         }
+    }
+
+}
+
+
+impl ForwardGraph {
+
+    fn new(atoms: Vec<Tree>, heads: HashSet<Tree>, operations: Vec<(Tree, Vec<usize>)>) -> ForwardGraph {
+        ForwardGraph { atoms, heads, operations }
     }
 
 }
@@ -386,14 +410,43 @@ fn topological_split(expr: Tree) -> (Vec<Tree>, HashSet<Tree>, Vec<Tree>) {
 
     for subexpr in subexpressions {
         match &*subexpr.node {
-            TreeNode::Atom(_) => atoms.push(subexpr),
+            TreeNode::Atom(_) => {
+                atoms.push(subexpr)
+            },
             TreeNode::Node(children) => {
                 heads.insert(children[0].clone());
                 nodes.push(subexpr);
-            }
+            },
         }
     }
     (atoms, heads, nodes)
+}
+
+
+fn forward_graph(expr: Tree) -> ForwardGraph {
+    let (atoms, heads, nodes) = topological_split(expr);
+
+    let num_atoms = atoms.len();
+
+    let mut operations = vec![];
+    let mut indices: HashMap<Tree, usize> = HashMap::new();
+
+    for (index, atom) in atoms.iter().enumerate() {
+        indices.insert(atom.clone(), index);
+    }
+
+    for (index, subexpr) in nodes.into_iter().enumerate() {
+        let children = subexpr.children();
+        let head = children[0].clone();
+        let arg_indices: Vec<usize> = children[1..]
+            .into_iter()
+            .map(|x| indices.get(x).unwrap().clone())
+            .collect();
+        operations.push((head, arg_indices));
+        indices.insert(subexpr, index + num_atoms);
+    }
+
+    ForwardGraph::new(atoms, heads, operations)
 }
 
 
@@ -634,6 +687,14 @@ impl IntoPy<PyObject> for Tree {
 }
 
 
+impl<'py> FromPyObject<'py> for Tree {
+    fn extract(ob: &'py PyAny) -> PyResult<Self> {
+        let ob: PyTreeExpr = ob.extract()?;
+        Ok(ob.tree)
+    }
+}
+
+
 impl PyTreeExpr {
 
     fn from_pyatom(atom: PyAtom) -> PyTreeExpr {
@@ -742,6 +803,52 @@ impl PyTreeNode {
 }
 
 
+impl PyForwardGraph {
+
+    fn from_forward_graph(forward_graph: ForwardGraph) -> PyForwardGraph {
+        PyForwardGraph{ forward_graph }
+    }
+
+}
+
+
+#[pymethods]
+impl PyForwardGraph {
+
+    #[new]
+    fn new(atoms: Vec<Tree>, heads: HashSet<Tree>, operations: Vec<(Tree, Vec<usize>)>) -> PyForwardGraph {
+        let graph = ForwardGraph::new(atoms, heads, operations);
+        PyForwardGraph::from_forward_graph(graph)
+    }
+
+    #[getter]
+    fn atoms(&self) -> Vec<Tree> {
+        self.forward_graph.atoms.clone()
+    }
+
+    #[getter]
+    fn heads(&self) -> HashSet<Tree> {
+        self.forward_graph.heads.clone()
+    }
+
+    #[getter]
+    fn operations(&self) -> Vec<(Tree, Vec<usize>)> {
+        println!("operations!");
+        self.forward_graph.operations.clone()
+    }
+
+    fn __richcmp__(&self, other: &Self, op: CompareOp, py: Python<'_>) -> PyObject {
+        println!("Comparing!");
+        match op {
+            CompareOp::Eq => (self.forward_graph == other.forward_graph).into_py(py),
+            CompareOp::Ne => (self.forward_graph != other.forward_graph).into_py(py),
+            _ => py.NotImplemented(),
+        }
+    }
+
+}
+
+
 #[pyfunction(name = "topological_sort")]
 #[pyo3(signature = (expression, heads=false))]
 fn topological_sort_py( expression: PyTreeExpr, heads: bool) -> Vec<Tree> {
@@ -755,6 +862,13 @@ fn topological_split_py( expression: PyTreeExpr) -> (Vec<Tree>, HashSet<Tree>, V
 }
 
 
+#[pyfunction(name = "forward_graph")]
+fn forward_graph_py( expression: PyTreeExpr) -> PyForwardGraph {
+    let graph = forward_graph(expression.tree);
+    PyForwardGraph::from_forward_graph(graph)
+}
+
+
 // ------------------------------- Initialise the module object.
 
 
@@ -765,7 +879,9 @@ fn rust_protosym(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTreeExpr>()?;
     m.add_class::<PyTreeAtom>()?;
     m.add_class::<PyTreeNode>()?;
+    m.add_class::<PyForwardGraph>()?;
     m.add_function(wrap_pyfunction!(topological_sort_py, m)?)?;
     m.add_function(wrap_pyfunction!(topological_split_py, m)?)?;
+    m.add_function(wrap_pyfunction!(forward_graph_py, m)?)?;
     Ok(())
 }
