@@ -376,42 +376,6 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
 }
 
 
-// Create a Python PyTreeExpr from a rust Tree. Needed because the rust tree
-// might need to become a PyTreeAtom or a PyTreeNode. Constructing an instance
-// of a sub-pyclass is awkward in pyo3. Ideally we should just get rid of the
-// subclasses since they don't really do anything useful here in the rust code
-// but they are there to replicate the exact classes used in the Python code.
-// Maybe the Python code should be changed to use a single type like Tree as
-// well.
-
-impl IntoPy<PyObject> for Tree {
-
-    fn into_py(self, py: Python<'_>) -> PyObject {
-        let initializer: PyClassInitializer<PyTreeExpr> = PyClassInitializer::from(
-            PyTreeExpr { tree: self.clone() }
-        );
-        let object = match *self.node {
-            TreeNode::Atom(_) => {
-                let initializer = initializer.add_subclass(PyTreeAtom {});
-                PyCell::new(py, initializer).unwrap().to_object(py)
-            },
-            TreeNode::Node(_) => {
-                let initializer = initializer.add_subclass(PyTreeNode {});
-                PyCell::new(py, initializer).unwrap().to_object(py)
-            }
-        };
-        object
-    }
-}
-
-
-#[pyfunction(name = "topological_sort")]
-#[pyo3(signature = (expression, heads=false))]
-fn topological_sort_py( expression: PyTreeExpr, heads: bool) -> Vec<Tree> {
-    topological_sort(expression.tree, heads)
-}
-
-
 // --------------------------------------------- AtomValue <--> Python
 
 // We don't implement FromPyObject because we need to know whether we are
@@ -620,6 +584,35 @@ impl PyAtomType {
 }
 
 
+// Create a Python PyTreeExpr from a rust Tree. Needed because the rust tree
+// might need to become a PyTreeAtom or a PyTreeNode. Constructing an instance
+// of a sub-pyclass is awkward in pyo3. Ideally we should just get rid of the
+// subclasses since they don't really do anything useful here in the rust code
+// but they are there to replicate the exact classes used in the Python code.
+// Maybe the Python code should be changed to use a single type like Tree as
+// well.
+
+impl IntoPy<PyObject> for Tree {
+
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        let initializer: PyClassInitializer<PyTreeExpr> = PyClassInitializer::from(
+            PyTreeExpr { tree: self.clone() }
+        );
+        let object = match *self.node {
+            TreeNode::Atom(_) => {
+                let initializer = initializer.add_subclass(PyTreeAtom {});
+                PyCell::new(py, initializer).unwrap().to_object(py)
+            },
+            TreeNode::Node(_) => {
+                let initializer = initializer.add_subclass(PyTreeNode {});
+                PyCell::new(py, initializer).unwrap().to_object(py)
+            }
+        };
+        object
+    }
+}
+
+
 impl PyTreeExpr {
 
     fn from_pyatom(atom: PyAtom) -> PyTreeExpr {
@@ -725,6 +718,13 @@ impl PyTreeNode {
         Ok((PyTreeNode {}, PyTreeExpr { tree }))
     }
 
+}
+
+
+#[pyfunction(name = "topological_sort")]
+#[pyo3(signature = (expression, heads=false))]
+fn topological_sort_py( expression: PyTreeExpr, heads: bool) -> Vec<Tree> {
+    topological_sort(expression.tree, heads)
 }
 
 
