@@ -429,7 +429,7 @@ fn forward_graph(expr: Tree) -> ForwardGraph {
 
     let num_atoms = atoms.len();
 
-    let mut operations = vec![];
+    let mut operations = Vec::with_capacity(atoms.len() + nodes.len());
     let mut indices: FnvHashMap<Tree, usize> = FnvHashMap::default();
 
     for (index, atom) in atoms.iter().enumerate() {
