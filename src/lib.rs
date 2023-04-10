@@ -195,7 +195,7 @@ impl Atom {
 impl Tree {
 
     fn from_atom(atom: Atom) -> Tree {
-        let node = ArcIntern::new(TreeNode::Atom(atom));
+        let node = Intern::new(TreeNode::Atom(atom));
         Tree { node }
     }
 
@@ -204,7 +204,7 @@ impl Tree {
         I: IntoIterator<Item = Tree>,
     {
         let children = children.into_iter().collect();
-        let node = ArcIntern::new(TreeNode::Node(children));
+        let node = Intern::new(TreeNode::Node(children));
         Tree { node }
     }
 
