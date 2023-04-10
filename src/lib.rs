@@ -39,7 +39,8 @@ use pyo3::types::PyTuple;
 use pyo3::class::basic::CompareOp;
 use pyo3::once_cell::GILOnceCell;
 
-use internment::ArcIntern;
+use internment::{Intern, ArcIntern};
+use fnv::{FnvHashMap, FnvHashSet};
 
 
 // ---- The type of values held in an Atom is AtomValue
@@ -93,14 +94,14 @@ struct Atom {
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct Tree {
-    node: ArcIntern<TreeNode>,
+    node: Intern<TreeNode>,
 }
 
 
 #[derive(PartialEq, Eq, Clone)]
 struct ForwardGraph {
     atoms: Vec<Tree>,
-    heads: HashSet<Tree>,
+    heads: FnvHashSet<Tree>,
     operations: Vec<(Tree, Vec<usize>)>,
 }
 
@@ -219,7 +220,7 @@ impl Tree {
 
 impl ForwardGraph {
 
-    fn new(atoms: Vec<Tree>, heads: HashSet<Tree>, operations: Vec<(Tree, Vec<usize>)>) -> ForwardGraph {
+    fn new(atoms: Vec<Tree>, heads: FnvHashSet<Tree>, operations: Vec<(Tree, Vec<usize>)>) -> ForwardGraph {
         ForwardGraph { atoms, heads, operations }
     }
 
@@ -348,7 +349,7 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
         }
     };
 
-    let mut seen = HashSet::new();
+    let mut seen = FnvHashSet::default();
     let mut expressions = vec![];
     let mut stack = vec![];
 
@@ -400,12 +401,12 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
 }
 
 
-fn topological_split(expr: Tree) -> (Vec<Tree>, HashSet<Tree>, Vec<Tree>) {
+fn topological_split(expr: Tree) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
 
     let subexpressions = topological_sort(expr, false);
 
     let mut atoms = vec![];
-    let mut heads = HashSet::new();
+    let mut heads = FnvHashSet::default();
     let mut nodes = vec![];
 
     for subexpr in subexpressions {
@@ -429,7 +430,7 @@ fn forward_graph(expr: Tree) -> ForwardGraph {
     let num_atoms = atoms.len();
 
     let mut operations = vec![];
-    let mut indices: HashMap<Tree, usize> = HashMap::new();
+    let mut indices: FnvHashMap<Tree, usize> = FnvHashMap::default();
 
     for (index, atom) in atoms.iter().enumerate() {
         indices.insert(atom.clone(), index);
@@ -816,7 +817,7 @@ impl PyForwardGraph {
 impl PyForwardGraph {
 
     #[new]
-    fn new(atoms: Vec<Tree>, heads: HashSet<Tree>, operations: Vec<(Tree, Vec<usize>)>) -> PyForwardGraph {
+    fn new(atoms: Vec<Tree>, heads: FnvHashSet<Tree>, operations: Vec<(Tree, Vec<usize>)>) -> PyForwardGraph {
         let graph = ForwardGraph::new(atoms, heads, operations);
         PyForwardGraph::from_forward_graph(graph)
     }
@@ -827,13 +828,12 @@ impl PyForwardGraph {
     }
 
     #[getter]
-    fn heads(&self) -> HashSet<Tree> {
+    fn heads(&self) -> FnvHashSet<Tree> {
         self.forward_graph.heads.clone()
     }
 
     #[getter]
     fn operations(&self) -> Vec<(Tree, Vec<usize>)> {
-        println!("operations!");
         self.forward_graph.operations.clone()
     }
 
@@ -857,7 +857,7 @@ fn topological_sort_py( expression: PyTreeExpr, heads: bool) -> Vec<Tree> {
 
 
 #[pyfunction(name = "topological_split")]
-fn topological_split_py( expression: PyTreeExpr) -> (Vec<Tree>, HashSet<Tree>, Vec<Tree>) {
+fn topological_split_py( expression: PyTreeExpr) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
     topological_split(expression.tree)
 }
 
