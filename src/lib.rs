@@ -838,7 +838,6 @@ impl PyForwardGraph {
     }
 
     fn __richcmp__(&self, other: &Self, op: CompareOp, py: Python<'_>) -> PyObject {
-        println!("Comparing!");
         match op {
             CompareOp::Eq => (self.forward_graph == other.forward_graph).into_py(py),
             CompareOp::Ne => (self.forward_graph != other.forward_graph).into_py(py),
