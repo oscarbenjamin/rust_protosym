@@ -28,7 +28,7 @@ use std::fmt;
 use std::iter::once;
 use std::sync::{Arc, Mutex};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use pyo3::prelude::*;
@@ -39,7 +39,7 @@ use pyo3::types::PyTuple;
 use pyo3::class::basic::CompareOp;
 use pyo3::once_cell::GILOnceCell;
 
-use internment::{Intern, ArcIntern};
+use internment::Intern; // ArcIntern
 use fnv::{FnvHashMap, FnvHashSet};
 
 
