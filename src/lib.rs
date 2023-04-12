@@ -8,16 +8,14 @@
 // Classes exposed from here:
 //    AtomType
 //    Atom
-//    TreeExpr
-//    TreeNode
-//    TreeAtom
-//
-// The Rust code here does not need the latter two classes and instead just has:
-//    AtomType
-//    Atom
 //    Tree
+//    Tr (alias for Tree.atom)
+//    ForwardGraph
 //
-// Maybe the Python code should be changed to the same.
+// Functions 
+//    topological_sort
+//    topological_split
+//    forward_graph
 //
 // For now the Rust code can only handle Atoms with an internal value that is a
 // string or an integer and also for integers it only uses 64 bit signed
@@ -123,25 +121,11 @@ struct PyAtom {
 }
 
 
-#[pyclass(name="TreeExpr", subclass)]
+#[pyclass(name="Tree", subclass)]
 #[derive(PartialEq, Eq, Hash, Clone)]
-struct PyTreeExpr {
+struct PyTree {
     tree: Tree,
 }
-
-
-// The way things work out here it would be better not to have PyTreeAtom and
-// PyTreeNode as distinct from PyTreeExpr.
-
-
-#[pyclass(extends=PyTreeExpr, name="TreeAtom")]
-#[derive(PartialEq, Eq, Hash, Clone)]
-struct PyTreeAtom {}
-
-
-#[pyclass(extends=PyTreeExpr, name="TreeNode")]
-#[derive(PartialEq, Eq, Hash, Clone)]
-struct PyTreeNode {}
 
 
 #[pyclass(name="ForwardGraph")]
@@ -272,7 +256,7 @@ impl Repr for Tree {
     fn repr(&self) -> String {
         match &*self.node {
             TreeNode::Atom(atom) => {
-                format!("TreeAtom({})", atom.repr())
+                format!("Tr({})", atom.repr())
             },
             TreeNode::Node(children) => {
                 let children = children
@@ -280,7 +264,7 @@ impl Repr for Tree {
                     .map(|x| x.repr())
                     .collect::<Vec<String>>()
                     .join(", ");
-                format!("TreeNode({})", children)
+                format!("Tree({})", children)
             },
         }
     }
@@ -659,53 +643,42 @@ impl PyAtomType {
 }
 
 
-// Create a Python PyTreeExpr from a rust Tree. Needed because the rust tree
-// might need to become a PyTreeAtom or a PyTreeNode. Constructing an instance
-// of a sub-pyclass is awkward in pyo3. Ideally we should just get rid of the
-// subclasses since they don't really do anything useful here in the rust code
-// but they are there to replicate the exact classes used in the Python code.
-// Maybe the Python code should be changed to use a single type like Tree as
-// well.
-
 impl IntoPy<PyObject> for Tree {
 
-    fn into_py(self, py: Python<'_>) -> PyObject {
-        let initializer: PyClassInitializer<PyTreeExpr> = PyClassInitializer::from(
-            PyTreeExpr { tree: self.clone() }
-        );
-        let object = match *self.node {
-            TreeNode::Atom(_) => {
-                let initializer = initializer.add_subclass(PyTreeAtom {});
-                PyCell::new(py, initializer).unwrap().to_object(py)
-            },
-            TreeNode::Node(_) => {
-                let initializer = initializer.add_subclass(PyTreeNode {});
-                PyCell::new(py, initializer).unwrap().to_object(py)
-            }
-        };
-        object
+    fn into_py(self, py: Python <'_>) -> PyObject {
+        PyTree::from_tree(self).into_py(py)
     }
+
 }
 
 
 impl<'py> FromPyObject<'py> for Tree {
     fn extract(ob: &'py PyAny) -> PyResult<Self> {
-        let ob: PyTreeExpr = ob.extract()?;
+        let ob: PyTree = ob.extract()?;
         Ok(ob.tree)
     }
 }
 
 
-impl PyTreeExpr {
+impl PyTree {
 
-    fn from_pyatom(atom: PyAtom) -> PyTreeExpr {
-        PyTreeExpr { tree: Tree::from_atom(atom.atom) }
+    fn from_tree(tree: Tree) -> PyTree {
+        PyTree { tree }
+    }
+
+    fn from_pyatom(atom: PyAtom) -> PyTree {
+        PyTree::from_tree(Tree::from_atom(atom.atom))
+    }
+
+    fn from_children(children: Vec<PyTree>) -> PyTree {
+        let children = children.into_iter().map(|x| x.tree);
+        PyTree::from_tree(Tree::from_children(children))
     }
 
 }
 
 
-impl ToPyObject for PyTreeExpr {
+impl ToPyObject for PyTree {
 
     fn to_object(&self, py: Python<'_>) -> PyObject {
         self.clone().into_py(py)
@@ -714,15 +687,27 @@ impl ToPyObject for PyTreeExpr {
 }
 
 
-// -------------------------------------------------- PyTreeExpr methods.
+// -------------------------------------------------- PyTree methods.
 
 
 #[pymethods]
-impl PyTreeExpr {
+impl PyTree {
+
+    #[new]
+    #[pyo3(signature = (*args))]
+    fn py_new(args: &PyTuple) -> PyResult<Self> {
+        let children: Vec<PyTree> = args.extract()?;
+        Ok(PyTree::from_children(children))
+    }
+
+    #[staticmethod]
+    fn atom(atom: PyAtom) -> PyTree {
+        PyTree::from_pyatom(atom)
+    }
 
     #[pyo3(signature = (*args))]
     fn __call__(&self, args: &PyTuple, py: Python<'_>) -> PyResult<PyObject> {
-        let args: Vec<PyTreeExpr> = args.extract()?;
+        let args: Vec<PyTree> = args.extract()?;
         let args = args.into_iter().map(|x| x.tree);
         let children = once(self.tree.clone()).chain(args);
         let tree = Tree::from_children(children.map(|x| x.clone()));
@@ -778,29 +763,10 @@ impl PyTreeExpr {
 }
 
 
-#[pymethods]
-impl PyTreeAtom {
-
-    #[new]
-    fn py_new(atom: PyAtom) -> (Self, PyTreeExpr) {
-        (PyTreeAtom {}, PyTreeExpr::from_pyatom(atom))
-    }
-
-}
-
-
-#[pymethods]
-impl PyTreeNode {
-
-    #[new]
-    #[pyo3(signature = (*args))]
-    fn py_new(args: &PyTuple) -> PyResult<(Self, PyTreeExpr)> {
-        let children: Vec<PyTreeExpr> = args.extract()?;
-        let children = children.into_iter().map(|x| x.tree);
-        let tree = Tree::from_children(children);
-        Ok((PyTreeNode {}, PyTreeExpr { tree }))
-    }
-
+#[pyfunction]
+#[pyo3(name = "Tr")]
+fn tree_atom(atom: PyAtom) -> PyTree {
+    PyTree::atom(atom)
 }
 
 
@@ -850,19 +816,19 @@ impl PyForwardGraph {
 
 #[pyfunction(name = "topological_sort")]
 #[pyo3(signature = (expression, heads=false))]
-fn topological_sort_py( expression: PyTreeExpr, heads: bool) -> Vec<Tree> {
+fn topological_sort_py( expression: PyTree, heads: bool) -> Vec<Tree> {
     topological_sort(expression.tree, heads)
 }
 
 
 #[pyfunction(name = "topological_split")]
-fn topological_split_py( expression: PyTreeExpr) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
+fn topological_split_py( expression: PyTree) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
     topological_split(expression.tree)
 }
 
 
 #[pyfunction(name = "forward_graph")]
-fn forward_graph_py( expression: PyTreeExpr) -> PyForwardGraph {
+fn forward_graph_py( expression: PyTree) -> PyForwardGraph {
     let graph = forward_graph(expression.tree);
     PyForwardGraph::from_forward_graph(graph)
 }
@@ -875,9 +841,8 @@ fn forward_graph_py( expression: PyTreeExpr) -> PyForwardGraph {
 fn rust_protosym(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyAtomType>()?;
     m.add_class::<PyAtom>()?;
-    m.add_class::<PyTreeExpr>()?;
-    m.add_class::<PyTreeAtom>()?;
-    m.add_class::<PyTreeNode>()?;
+    m.add_class::<PyTree>()?;
+    m.add_function(wrap_pyfunction!(tree_atom, m)?)?;
     m.add_class::<PyForwardGraph>()?;
     m.add_function(wrap_pyfunction!(topological_sort_py, m)?)?;
     m.add_function(wrap_pyfunction!(topological_split_py, m)?)?;
