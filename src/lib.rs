@@ -12,7 +12,7 @@
 //    Tr (alias for Tree.atom)
 //    ForwardGraph
 //
-// Functions 
+// Functions
 //    topological_sort
 //    topological_split
 //    forward_graph
@@ -22,27 +22,25 @@
 // integers. The intention is certainly to improve that.
 //
 
-use std::fmt;
-use std::iter::once;
-use std::sync::{Arc, Mutex};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::iter::once;
+use std::sync::{Arc, Mutex};
 
-use pyo3::prelude::*;
-use pyo3::exceptions::PyValueError;
-use pyo3::exceptions::PyTypeError;
-use pyo3::types::PyType;
-use pyo3::types::PyTuple;
 use pyo3::class::basic::CompareOp;
+use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::PyValueError;
 use pyo3::once_cell::GILOnceCell;
+use pyo3::prelude::*;
+use pyo3::types::PyTuple;
+use pyo3::types::PyType;
 
-use internment::Intern; // ArcIntern
 use fnv::{FnvHashMap, FnvHashSet};
-
+use internment::Intern; // ArcIntern
 
 // ---- The type of values held in an Atom is AtomValue
-
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 enum AtomValue {
@@ -50,9 +48,7 @@ enum AtomValue {
     Int(i64),
 }
 
-
 // ---- Internal rust structs
-
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct _AtomType {
@@ -60,13 +56,11 @@ struct _AtomType {
     type_name: String,
 }
 
-
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct _Atom {
     atom_type: AtomType,
     value: AtomValue,
 }
-
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 enum TreeNode {
@@ -74,27 +68,22 @@ enum TreeNode {
     Node(Vec<Tree>),
 }
 
-
 // ------------------- The public rust level structs
-
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct AtomType {
     _atom_type: Arc<_AtomType>,
 }
 
-
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct Atom {
     _atom: _Atom,
 }
 
-
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct Tree {
     node: Intern<TreeNode>,
 }
-
 
 #[derive(PartialEq, Eq, Clone)]
 struct ForwardGraph {
@@ -103,47 +92,39 @@ struct ForwardGraph {
     operations: Vec<(Tree, Vec<usize>)>,
 }
 
-
 // ------------------- Structs for the Python objects
 
-
-#[pyclass(name="AtomType")]
+#[pyclass(name = "AtomType")]
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct PyAtomType {
     atom_type: AtomType,
 }
 
-
-#[pyclass(name="Atom")]
+#[pyclass(name = "Atom")]
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct PyAtom {
     atom: Atom,
 }
 
-
-#[pyclass(name="Tree", subclass)]
+#[pyclass(name = "Tree", subclass)]
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct PyTree {
     tree: Tree,
 }
 
-
-#[pyclass(name="ForwardGraph")]
+#[pyclass(name = "ForwardGraph")]
 #[derive(PartialEq, Eq, Clone)]
 struct PyForwardGraph {
     forward_graph: ForwardGraph,
 }
 
-
 // ---------------------------------------- Construct Interned Tree
 
-
 impl AtomType {
-
     fn new(name: &str, type_name: &str) -> AtomType {
         let name = name.to_string();
         let type_name = type_name.to_string();
-        let _atom_type = Arc::new(_AtomType{ name, type_name });
+        let _atom_type = Arc::new(_AtomType { name, type_name });
         AtomType { _atom_type }
     }
 
@@ -154,12 +135,9 @@ impl AtomType {
     fn type_name(&self) -> &String {
         &self._atom_type.type_name
     }
-
 }
 
-
 impl Atom {
-
     fn new(atom_type: AtomType, value: AtomValue) -> Atom {
         let _atom = _Atom { atom_type, value };
         Atom { _atom }
@@ -172,12 +150,9 @@ impl Atom {
     fn value(&self) -> &AtomValue {
         &self._atom.value
     }
-
 }
 
-
 impl Tree {
-
     fn from_atom(atom: Atom) -> Tree {
         let node = Intern::new(TreeNode::Atom(atom));
         Tree { node }
@@ -198,66 +173,55 @@ impl Tree {
             TreeNode::Atom(_) => vec![],
         }
     }
-
 }
-
 
 impl ForwardGraph {
-
-    fn new(atoms: Vec<Tree>, heads: FnvHashSet<Tree>, operations: Vec<(Tree, Vec<usize>)>) -> ForwardGraph {
-        ForwardGraph { atoms, heads, operations }
+    fn new(
+        atoms: Vec<Tree>,
+        heads: FnvHashSet<Tree>,
+        operations: Vec<(Tree, Vec<usize>)>,
+    ) -> ForwardGraph {
+        ForwardGraph {
+            atoms,
+            heads,
+            operations,
+        }
     }
-
 }
-
 
 // ---------------------------------------------- Repr (__repr__)
 
-
 trait Repr {
-
     fn repr(&self) -> String;
-
 }
 
-
 impl Repr for AtomType {
-
     fn repr(&self) -> String {
         self.name().clone()
     }
-
 }
 
-
 impl Repr for AtomValue {
-
     fn repr(&self) -> String {
         match &self {
             AtomValue::Str(val) => format!("'{}'", val),
             AtomValue::Int(val) => format!("{}", val),
         }
     }
-
 }
 
-
 impl Repr for Atom {
-
     fn repr(&self) -> String {
         format!("{}({})", self.atom_type().repr(), self.value().repr())
     }
-
 }
 
-
 impl Repr for Tree {
-
     fn repr(&self) -> String {
         match &*self.node {
             TreeNode::Atom(atom) => {
                 format!("Tr({})", atom.repr())
-            },
+            }
             TreeNode::Node(children) => {
                 let children = children
                     .into_iter()
@@ -265,45 +229,32 @@ impl Repr for Tree {
                     .collect::<Vec<String>>()
                     .join(", ");
                 format!("Tree({})", children)
-            },
+            }
         }
     }
-
 }
-
 
 // -------------------------------------------- Display (__str__)
 
-
 impl fmt::Display for AtomValue {
-
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             AtomValue::Str(val) => write!(f, "{}", val),
             AtomValue::Int(val) => write!(f, "{}", val),
         }
     }
-
 }
 
-
 impl fmt::Display for Atom {
-
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         AtomValue::fmt(self.value(), f)
     }
-
 }
 
-
 impl fmt::Display for Tree {
-
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-
         match &*self.node {
-            TreeNode::Atom(atom) => {
-                write!(f, "{}", atom)?
-            },
+            TreeNode::Atom(atom) => write!(f, "{}", atom)?,
             TreeNode::Node(children) => {
                 let head = children[0].to_string();
                 let args = children[1..]
@@ -312,23 +263,18 @@ impl fmt::Display for Tree {
                     .collect::<Vec<String>>()
                     .join(", ");
                 write!(f, "{}({})", head, args)?
-            },
-
+            }
         };
         Ok(())
     }
-
 }
-
 
 // --------------------------------------------- algorithms
 
-
 fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
-
     let reverse_pop_head = |children: &mut Vec<Tree>| {
         children.reverse();
-        if ! heads {
+        if !heads {
             children.pop(); // pop off the head (from end because reversed).
         }
     };
@@ -341,18 +287,17 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
     reverse_pop_head(&mut children);
     stack.push((expression, children));
 
-    while ! stack.is_empty() {
+    while !stack.is_empty() {
         // Pop the next expression and its unprocessed children off the stack.
         let (expression, mut children) = stack.pop().unwrap();
 
         // Find the first unseen child (if any).
         let mut unseen_child = None;
 
-        while ! children.is_empty() {
-
+        while !children.is_empty() {
             let child = children.pop().unwrap();
 
-            if ! seen.contains(&child) {
+            if !seen.contains(&child) {
                 seen.insert(child.clone());
                 unseen_child = Some(child);
                 break;
@@ -370,7 +315,7 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
                 reverse_pop_head(&mut grand_children);
                 stack.push((expression, children));
                 stack.push((child, grand_children));
-            },
+            }
             None => {
                 // There were no unseen children so push this expression to the
                 // output list.
@@ -384,9 +329,7 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
     expressions
 }
 
-
 fn topological_split(expr: Tree) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
-
     let subexpressions = topological_sort(expr, false);
 
     let mut atoms = vec![];
@@ -395,18 +338,15 @@ fn topological_split(expr: Tree) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
 
     for subexpr in subexpressions {
         match &*subexpr.node {
-            TreeNode::Atom(_) => {
-                atoms.push(subexpr)
-            },
+            TreeNode::Atom(_) => atoms.push(subexpr),
             TreeNode::Node(children) => {
                 heads.insert(children[0].clone());
                 nodes.push(subexpr);
-            },
+            }
         }
     }
     (atoms, heads, nodes)
 }
-
 
 fn forward_graph(expr: Tree) -> ForwardGraph {
     let (atoms, heads, nodes) = topological_split(expr);
@@ -434,51 +374,39 @@ fn forward_graph(expr: Tree) -> ForwardGraph {
     ForwardGraph::new(atoms, heads, operations)
 }
 
-
 // --------------------------------------------- AtomValue <--> Python
 
 // We don't implement FromPyObject because we need to know whether we are
 // expecting str or int.
 impl AtomValue {
-
-    fn from_pyobject(type_name: &str, value: PyObject, py: Python <'_>) -> PyResult<AtomValue> {
+    fn from_pyobject(type_name: &str, value: PyObject, py: Python<'_>) -> PyResult<AtomValue> {
         match type_name {
             "int" => Ok(AtomValue::Int(value.extract(py)?)),
             "str" => Ok(AtomValue::Str(value.extract(py)?)),
-            _ => Err(PyTypeError::new_err("bad internal type."))
+            _ => Err(PyTypeError::new_err("bad internal type.")),
         }
     }
-
 }
 
-
 impl IntoPy<PyObject> for AtomValue {
-
-    fn into_py(self, py: Python <'_>) -> PyObject {
+    fn into_py(self, py: Python<'_>) -> PyObject {
         match self {
             Self::Str(value) => value.into_py(py),
             Self::Int(value) => value.into_py(py),
         }
     }
-
 }
 
-
 impl AtomType {
-
-    fn pyatom_from_pyobject(&self, value: PyObject, py: Python <'_>) -> PyResult<PyAtom> {
+    fn pyatom_from_pyobject(&self, value: PyObject, py: Python<'_>) -> PyResult<PyAtom> {
         let value = AtomValue::from_pyobject(self.type_name(), value, py)?;
         Ok(PyAtom::new(self.clone(), value))
     }
-
 }
-
 
 // ------------------------------------------ PyAtom/PyAtomType methods
 
-
 impl PyAtom {
-
     fn new(atom_type: AtomType, value: AtomValue) -> PyAtom {
         PyAtom::from_atom(Atom::new(atom_type, value))
     }
@@ -494,9 +422,7 @@ impl PyAtom {
     fn get_atom_type(&self) -> &AtomType {
         &self.atom.atom_type()
     }
-
 }
-
 
 // We need to keep a mapping from Rust AtomType structs to corresponding Python
 // types because PyAtomType is constructed from Python as e.g.
@@ -511,9 +437,7 @@ impl PyAtom {
 
 static ATOM_TYPE_MAP: GILOnceCell<Mutex<HashMap<AtomType, Py<PyType>>>> = GILOnceCell::new();
 
-
 fn python_type_map_add(atom_type: &AtomType, python_type: &PyType, py: Python<'_>) {
-
     let mut map = ATOM_TYPE_MAP
         .get_or_init(py, || Mutex::new(HashMap::new()))
         .lock()
@@ -522,9 +446,7 @@ fn python_type_map_add(atom_type: &AtomType, python_type: &PyType, py: Python<'_
     map.insert(atom_type.clone(), python_type.into());
 }
 
-
 fn python_type_map_get(atom_type: &AtomType, py: Python<'_>) -> Py<PyType> {
-
     let map = ATOM_TYPE_MAP
         .get_or_init(py, || Mutex::new(HashMap::new()))
         .lock()
@@ -533,9 +455,7 @@ fn python_type_map_get(atom_type: &AtomType, py: Python<'_>) -> Py<PyType> {
     map.get(atom_type).unwrap().clone()
 }
 
-
 impl PyAtomType {
-
     fn new(name: &str, type_name: &str) -> Self {
         PyAtomType::from_atom_type(AtomType::new(name, type_name))
     }
@@ -547,13 +467,10 @@ impl PyAtomType {
     fn name(&self) -> &String {
         &self.atom_type.name()
     }
-
 }
-
 
 #[pymethods]
 impl PyAtom {
-
     fn __repr__(&self) -> String {
         format!("{}({})", self.atom_type().name(), self.atom_value().repr())
     }
@@ -587,10 +504,8 @@ impl PyAtom {
     }
 }
 
-
 #[pymethods]
 impl PyAtomType {
-
     #[new]
     fn py_new(name: String, py_type_object: &PyType, py: Python<'_>) -> PyResult<Self> {
         match py_type_object.name()? {
@@ -599,10 +514,8 @@ impl PyAtomType {
                 // Add this to the type map for python_type property
                 python_type_map_add(&py_atom_type.atom_type, py_type_object, py);
                 Ok(py_atom_type)
-            },
-            _ => {
-                Err(PyValueError::new_err("type_name must be int or str."))
-            },
+            }
+            _ => Err(PyValueError::new_err("type_name must be int or str.")),
         }
     }
 
@@ -642,15 +555,11 @@ impl PyAtomType {
     }
 }
 
-
 impl IntoPy<PyObject> for Tree {
-
-    fn into_py(self, py: Python <'_>) -> PyObject {
+    fn into_py(self, py: Python<'_>) -> PyObject {
         PyTree::from_tree(self).into_py(py)
     }
-
 }
-
 
 impl<'py> FromPyObject<'py> for Tree {
     fn extract(ob: &'py PyAny) -> PyResult<Self> {
@@ -659,9 +568,7 @@ impl<'py> FromPyObject<'py> for Tree {
     }
 }
 
-
 impl PyTree {
-
     fn from_tree(tree: Tree) -> PyTree {
         PyTree { tree }
     }
@@ -674,25 +581,18 @@ impl PyTree {
         let children = children.into_iter().map(|x| x.tree);
         PyTree::from_tree(Tree::from_children(children))
     }
-
 }
 
-
 impl ToPyObject for PyTree {
-
     fn to_object(&self, py: Python<'_>) -> PyObject {
         self.clone().into_py(py)
     }
-
 }
-
 
 // -------------------------------------------------- PyTree methods.
 
-
 #[pymethods]
 impl PyTree {
-
     #[new]
     #[pyo3(signature = (*args))]
     fn py_new(args: &PyTuple) -> PyResult<Self> {
@@ -716,14 +616,14 @@ impl PyTree {
 
     #[getter]
     fn children<'a>(&'a self, py: Python<'a>) -> PyResult<&PyTuple> {
-
         let children: Vec<PyObject> = match &*self.tree.node {
             TreeNode::Atom(_) => {
                 vec![]
-            },
-            TreeNode::Node(children) => {
-                children.into_iter().map(|x| x.clone().into_py(py)).collect()
-            },
+            }
+            TreeNode::Node(children) => children
+                .into_iter()
+                .map(|x| x.clone().into_py(py))
+                .collect(),
         };
 
         let children = PyTuple::new(py, children);
@@ -759,9 +659,7 @@ impl PyTree {
         self.hash(&mut hasher);
         hasher.finish()
     }
-
 }
-
 
 #[pyfunction]
 #[pyo3(name = "Tr")]
@@ -769,21 +667,20 @@ fn tree_atom(atom: PyAtom) -> PyTree {
     PyTree::atom(atom)
 }
 
-
 impl PyForwardGraph {
-
     fn from_forward_graph(forward_graph: ForwardGraph) -> PyForwardGraph {
-        PyForwardGraph{ forward_graph }
+        PyForwardGraph { forward_graph }
     }
-
 }
-
 
 #[pymethods]
 impl PyForwardGraph {
-
     #[new]
-    fn new(atoms: Vec<Tree>, heads: FnvHashSet<Tree>, operations: Vec<(Tree, Vec<usize>)>) -> PyForwardGraph {
+    fn new(
+        atoms: Vec<Tree>,
+        heads: FnvHashSet<Tree>,
+        operations: Vec<(Tree, Vec<usize>)>,
+    ) -> PyForwardGraph {
         let graph = ForwardGraph::new(atoms, heads, operations);
         PyForwardGraph::from_forward_graph(graph)
     }
@@ -810,32 +707,26 @@ impl PyForwardGraph {
             _ => py.NotImplemented(),
         }
     }
-
 }
-
 
 #[pyfunction(name = "topological_sort")]
 #[pyo3(signature = (expression, heads=false))]
-fn topological_sort_py( expression: PyTree, heads: bool) -> Vec<Tree> {
+fn topological_sort_py(expression: PyTree, heads: bool) -> Vec<Tree> {
     topological_sort(expression.tree, heads)
 }
 
-
 #[pyfunction(name = "topological_split")]
-fn topological_split_py( expression: PyTree) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
+fn topological_split_py(expression: PyTree) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
     topological_split(expression.tree)
 }
 
-
 #[pyfunction(name = "forward_graph")]
-fn forward_graph_py( expression: PyTree) -> PyForwardGraph {
+fn forward_graph_py(expression: PyTree) -> PyForwardGraph {
     let graph = forward_graph(expression.tree);
     PyForwardGraph::from_forward_graph(graph)
 }
 
-
 // ------------------------------- Initialise the module object.
-
 
 #[pymodule]
 fn rust_protosym(_py: Python, m: &PyModule) -> PyResult<()> {
