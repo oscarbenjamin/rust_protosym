@@ -23,7 +23,7 @@
 //
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::once;
@@ -271,7 +271,7 @@ impl fmt::Display for Tree {
 
 // --------------------------------------------- algorithms
 
-fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
+fn topological_sort(expression: Tree, heads: bool, exclude: Option<HashSet<Tree>>) -> Vec<Tree> {
     let reverse_pop_head = |children: &mut Vec<Tree>| {
         children.reverse();
         if !heads {
@@ -280,12 +280,19 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
     };
 
     let mut seen = FnvHashSet::default();
+    if let Some(exclude) = exclude {
+        seen.extend(exclude);
+    }
+
     let mut expressions = vec![];
     let mut stack = vec![];
 
     let mut children = expression.children();
     reverse_pop_head(&mut children);
-    stack.push((expression, children));
+
+    if !seen.contains(&expression) {
+        stack.push((expression, children));
+    }
 
     while !stack.is_empty() {
         // Pop the next expression and its unprocessed children off the stack.
@@ -330,7 +337,7 @@ fn topological_sort(expression: Tree, heads: bool) -> Vec<Tree> {
 }
 
 fn topological_split(expr: Tree) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
-    let subexpressions = topological_sort(expr, false);
+    let subexpressions = topological_sort(expr, false, None);
 
     let mut atoms = vec![];
     let mut heads = FnvHashSet::default();
@@ -710,9 +717,9 @@ impl PyForwardGraph {
 }
 
 #[pyfunction(name = "topological_sort")]
-#[pyo3(signature = (expression, heads=false))]
-fn topological_sort_py(expression: PyTree, heads: bool) -> Vec<Tree> {
-    topological_sort(expression.tree, heads)
+#[pyo3(signature = (expression, heads=false, exclude=None))]
+fn topological_sort_py(expression: PyTree, heads: bool, exclude: Option<HashSet<Tree>>) -> Vec<Tree> {
+    topological_sort(expression.tree, heads, exclude)
 }
 
 #[pyfunction(name = "topological_split")]
