@@ -524,15 +524,7 @@ fn diff_forward(expression: Tree, sym: Tree, prop: &DiffProperties) -> Tree {
     let graph = forward_graph(expression);
 
     let mut stack = graph.atoms.clone();
-    let mut diff_stack = Vec::with_capacity(stack.len());
-    for (i, atom) in stack.iter().enumerate() {
-        if *atom == sym {
-            diff_stack[i] = prop.one.clone();
-        }
-        else {
-            diff_stack[i] = prop.zero.clone();
-        }
-    }
+    let mut diff_stack: Vec<Tree> = stack.clone().into_iter().map(|x| if x == sym { prop.one.clone() } else { prop.zero.clone() }).collect();
 
     for (func, indices) in graph.operations {
         let mut args = Vec::with_capacity(indices.len());
@@ -596,7 +588,7 @@ fn diff_forward(expression: Tree, sym: Tree, prop: &DiffProperties) -> Tree {
         diff_stack.push(derivative);
     }
 
-    stack.last().unwrap().clone()
+    diff_stack.last().unwrap().clone()
 }
 
 // --------------------------------------------- AtomValue <--> Python

@@ -9,6 +9,7 @@ from .rust_protosym import (
     topological_sort,
     topological_split,
     forward_graph,
+    diff_forward,
 )
 
 
@@ -23,4 +24,5 @@ __all__ = [
     "topological_sort",
     "topological_split",
     "forward_graph",
+    "diff_forward",
 ]
