@@ -23,7 +23,7 @@
 //
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::once;
@@ -92,6 +92,21 @@ struct ForwardGraph {
     operations: Vec<(Tree, Vec<usize>)>,
 }
 
+struct SubsFunc {
+    nargs: usize,
+    atoms: Vec<Tree>,
+    operations: Vec<Vec<usize>>,
+}
+
+struct DiffProperties {
+    zero: Tree,
+    one: Tree,
+    add: Tree,
+    mul: Tree,
+    distributive: FnvHashSet<Tree>,
+    diff_rules: FnvHashMap<(Tree, usize), SubsFunc>,
+}
+
 // ------------------- Structs for the Python objects
 
 #[pyclass(name = "AtomType")]
@@ -116,6 +131,11 @@ struct PyTree {
 #[derive(PartialEq, Eq, Clone)]
 struct PyForwardGraph {
     forward_graph: ForwardGraph,
+}
+
+#[pyclass(name = "SubsFunc")]
+struct PySubsFunc {
+    subs_func: SubsFunc,
 }
 
 // ---------------------------------------- Construct Interned Tree
@@ -187,6 +207,97 @@ impl ForwardGraph {
             operations,
         }
     }
+}
+
+impl SubsFunc {
+    fn new(
+        nargs: usize,
+        atoms: Vec<Tree>,
+        operations: Vec<Vec<usize>>,
+    ) -> SubsFunc {
+        SubsFunc {
+            nargs,
+            atoms,
+            operations
+        }
+    }
+
+    fn from_expr_args(expr: Tree, args: Vec<Tree>) -> SubsFunc {
+        let (nargs, atoms, operations) = make_function_evaluator(expr, args);
+        SubsFunc::new(nargs, atoms, operations)
+    }
+
+    fn call<I>(&self, args: I) -> Tree
+    where
+        I: IntoIterator<Item = Tree>,
+    {
+        let mut stack: Vec<Tree> = args.into_iter().collect();
+        stack.extend(self.atoms.clone());
+
+        for indices in self.operations.clone() {
+            let children = indices.iter().map(|x| stack[x.clone()].clone());
+            stack.push(Tree::from_children(children));
+        };
+
+        stack.last().unwrap().clone()
+    }
+}
+
+fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Vec<Vec<usize>>) {
+
+    let num_args = args.len();
+    let args_set = FnvHashSet::from_iter(args.clone());
+
+    let subexpressions = topological_sort(expr.clone(), true, Some(args_set));
+
+    let mut atoms = Vec::new();
+    let mut nodes = Vec::new();
+    let mut has_args = FnvHashSet::from_iter(args.clone());
+    let mut node_children = FnvHashSet::default();
+
+    for subexpr in subexpressions {
+        let children = subexpr.children();
+        if children.is_empty() {
+            atoms.push(subexpr);
+        }
+        else {
+            let children_set = FnvHashSet::from_iter(children);
+            if children_set.is_disjoint(&has_args) {
+                // This node does not have args among its (in)direct children. We treat it as
+                // atomic for the purposes of rebuilding the expression.
+                atoms.push(subexpr);
+            }
+            else {
+                // This does have args so we cannot rebuild it ahead of time. Push to the nodes
+                // stack.
+                has_args.insert(subexpr.clone());
+                node_children.extend(children_set);
+                nodes.push(subexpr);
+            }
+        }
+    }
+
+    if !atoms.is_empty() && nodes.is_empty() {
+        // We get here if expr does not contain args.
+        atoms = vec![expr];
+    }
+    else {
+        // Prune atoms that are not a child of any node.
+        atoms = atoms.into_iter().filter(|x| node_children.contains(x)).collect();
+    }
+
+    let num_args_atoms = num_args + atoms.len();
+    let args_atoms = args.iter().chain(atoms.iter()).map(|x| x.clone());
+    let mut indices: FnvHashMap<Tree, usize> = args_atoms.zip(0..num_args_atoms).collect();
+
+    let mut operations = vec![];
+    for (index, node) in nodes.into_iter().enumerate() {
+        let child_indices = node.children().iter().map(|x| indices.get(&x).unwrap().clone()).collect();
+        operations.push(child_indices);
+        indices.insert(node, index + num_args_atoms);
+    }
+
+    (num_args, atoms, operations)
 }
 
 // ---------------------------------------------- Repr (__repr__)
@@ -271,7 +382,7 @@ impl fmt::Display for Tree {
 
 // --------------------------------------------- algorithms
 
-fn topological_sort(expression: Tree, heads: bool, exclude: Option<HashSet<Tree>>) -> Vec<Tree> {
+fn topological_sort(expression: Tree, heads: bool, exclude: Option<FnvHashSet<Tree>>) -> Vec<Tree> {
     let reverse_pop_head = |children: &mut Vec<Tree>| {
         children.reverse();
         if !heads {
@@ -716,9 +827,50 @@ impl PyForwardGraph {
     }
 }
 
+impl PySubsFunc {
+    fn from_subs_func(subs_func: SubsFunc) -> PySubsFunc {
+        PySubsFunc { subs_func }
+    }
+}
+
+#[pymethods]
+impl PySubsFunc {
+    #[new]
+    fn py_new(expr: Tree, args: Vec<Tree>) -> PySubsFunc {
+        let subs_func = SubsFunc::from_expr_args(expr, args);
+        PySubsFunc::from_subs_func(subs_func)
+    }
+
+    #[pyo3(signature = (*args))]
+    fn __call__(&self, args: &PyTuple, py: Python<'_>) -> PyResult<PyObject> {
+        if args.len() != self.subs_func.nargs {
+            return Err(PyTypeError::new_err("Wrong number of arguments"))
+        }
+        let args: Vec<PyTree> = args.extract()?;
+        let args = args.into_iter().map(|x| x.tree);
+        let result = self.subs_func.call(args);
+        Ok(result.into_py(py))
+    }
+
+    #[getter]
+    fn nargs(&self) -> usize {
+        self.subs_func.nargs
+    }
+
+    #[getter]
+    fn atoms(&self) -> Vec<Tree> {
+        self.subs_func.atoms.clone()
+    }
+
+    #[getter]
+    fn operations(&self) -> Vec<Vec<usize>> {
+        self.subs_func.operations.clone()
+    }
+}
+
 #[pyfunction(name = "topological_sort")]
 #[pyo3(signature = (expression, heads=false, exclude=None))]
-fn topological_sort_py(expression: PyTree, heads: bool, exclude: Option<HashSet<Tree>>) -> Vec<Tree> {
+fn topological_sort_py(expression: PyTree, heads: bool, exclude: Option<FnvHashSet<Tree>>) -> Vec<Tree> {
     topological_sort(expression.tree, heads, exclude)
 }
 
@@ -740,8 +892,9 @@ fn rust_protosym(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyAtomType>()?;
     m.add_class::<PyAtom>()?;
     m.add_class::<PyTree>()?;
-    m.add_function(wrap_pyfunction!(tree_atom, m)?)?;
+    m.add_function(wrap_pyfunction!(tree_atom, m)?)?; // Tr
     m.add_class::<PyForwardGraph>()?;
+    m.add_class::<PySubsFunc>()?;
     m.add_function(wrap_pyfunction!(topological_sort_py, m)?)?;
     m.add_function(wrap_pyfunction!(topological_split_py, m)?)?;
     m.add_function(wrap_pyfunction!(forward_graph_py, m)?)?;
