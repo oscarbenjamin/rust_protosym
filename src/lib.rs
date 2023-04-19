@@ -224,15 +224,11 @@ impl ForwardGraph {
 }
 
 impl SubsFunc {
-    fn new(
-        nargs: usize,
-        atoms: Vec<Tree>,
-        operations: Vec<Vec<usize>>,
-    ) -> SubsFunc {
+    fn new(nargs: usize, atoms: Vec<Tree>, operations: Vec<Vec<usize>>) -> SubsFunc {
         SubsFunc {
             nargs,
             atoms,
-            operations
+            operations,
         }
     }
 
@@ -251,22 +247,24 @@ impl SubsFunc {
         for indices in self.operations.clone() {
             let children = indices.iter().map(|x| stack[x.clone()].clone());
             stack.push(Tree::from_children(children));
-        };
+        }
 
         stack.last().unwrap().clone()
     }
 }
 
 impl DiffProperties {
-    fn from_ring_props (
-        zero: Tree,
-        one: Tree,
-        add: Tree,
-        mul: Tree,
-    ) -> DiffProperties {
+    fn from_ring_props(zero: Tree, one: Tree, add: Tree, mul: Tree) -> DiffProperties {
         let distributive = FnvHashSet::default();
         let diff_rules = FnvHashMap::default();
-        DiffProperties { zero, one, add, mul, distributive, diff_rules }
+        DiffProperties {
+            zero,
+            one,
+            add,
+            mul,
+            distributive,
+            diff_rules,
+        }
     }
 }
 
@@ -463,7 +461,6 @@ fn forward_graph(expr: Tree) -> ForwardGraph {
 }
 
 fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Vec<Vec<usize>>) {
-
     let num_args = args.len();
     let args_set = FnvHashSet::from_iter(args.clone());
 
@@ -478,15 +475,13 @@ fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Ve
         let children = subexpr.children();
         if children.is_empty() {
             atoms.push(subexpr);
-        }
-        else {
+        } else {
             let children_set = FnvHashSet::from_iter(children);
             if children_set.is_disjoint(&has_args) {
                 // This node does not have args among its (in)direct children. We treat it as
                 // atomic for the purposes of rebuilding the expression.
                 atoms.push(subexpr);
-            }
-            else {
+            } else {
                 // This does have args so we cannot rebuild it ahead of time. Push to the nodes
                 // stack.
                 has_args.insert(subexpr.clone());
@@ -499,10 +494,12 @@ fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Ve
     if !atoms.is_empty() && nodes.is_empty() {
         // We get here if expr does not contain args.
         atoms = vec![expr];
-    }
-    else {
+    } else {
         // Prune atoms that are not a child of any node.
-        atoms = atoms.into_iter().filter(|x| node_children.contains(x)).collect();
+        atoms = atoms
+            .into_iter()
+            .filter(|x| node_children.contains(x))
+            .collect();
     }
 
     let num_args_atoms = num_args + atoms.len();
@@ -511,7 +508,11 @@ fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Ve
 
     let mut operations = vec![];
     for (index, node) in nodes.into_iter().enumerate() {
-        let child_indices = node.children().iter().map(|x| indices.get(&x).unwrap().clone()).collect();
+        let child_indices = node
+            .children()
+            .iter()
+            .map(|x| indices.get(&x).unwrap().clone())
+            .collect();
         operations.push(child_indices);
         indices.insert(node, index + num_args_atoms);
     }
@@ -520,11 +521,20 @@ fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Ve
 }
 
 fn diff_forward(expression: Tree, sym: Tree, prop: &DiffProperties) -> Tree {
-
     let graph = forward_graph(expression);
 
     let mut stack = graph.atoms.clone();
-    let mut diff_stack: Vec<Tree> = stack.clone().into_iter().map(|x| if x == sym { prop.one.clone() } else { prop.zero.clone() }).collect();
+    let mut diff_stack: Vec<Tree> = stack
+        .clone()
+        .into_iter()
+        .map(|x| {
+            if x == sym {
+                prop.one.clone()
+            } else {
+                prop.zero.clone()
+            }
+        })
+        .collect();
 
     for (func, indices) in graph.operations {
         let mut args = Vec::with_capacity(indices.len());
@@ -539,16 +549,13 @@ fn diff_forward(expression: Tree, sym: Tree, prop: &DiffProperties) -> Tree {
         if prop.distributive.contains(&func) {
             // Distributive rule f(x, y)' = f(x', y')
             diff_terms.push(func.call(diff_args));
-        }
-        else if diff_args.clone().into_iter().all(|a| a == prop.zero) {
+        } else if diff_args.clone().into_iter().all(|a| a == prop.zero) {
             // This expression does not depend on sym at all. This will return zero but it is not
             // clear that the expression is a number so zero may be incorrect.
             ();
-        }
-        else if func == prop.add {
+        } else if func == prop.add {
             diff_terms.extend(diff_args.into_iter().filter(|a| *a != prop.zero));
-        }
-        else if func == prop.mul {
+        } else if func == prop.mul {
             // Product rule
             for (i, da) in diff_args.into_iter().enumerate() {
                 if da != prop.zero {
@@ -558,8 +565,7 @@ fn diff_forward(expression: Tree, sym: Tree, prop: &DiffProperties) -> Tree {
                     diff_terms.push(term);
                 }
             }
-        }
-        else {
+        } else {
             // Chain rule
             for (i, diff_arg) in diff_args.into_iter().enumerate() {
                 if diff_arg != prop.zero {
@@ -948,7 +954,7 @@ impl PySubsFunc {
     #[pyo3(signature = (*args))]
     fn __call__(&self, args: &PyTuple, py: Python<'_>) -> PyResult<PyObject> {
         if args.len() != self.subs_func.nargs {
-            return Err(PyTypeError::new_err("Wrong number of arguments"))
+            return Err(PyTypeError::new_err("Wrong number of arguments"));
         }
         let args: Vec<PyTree> = args.extract()?;
         let args = args.into_iter().map(|x| x.tree);
@@ -991,7 +997,9 @@ impl PyDiffProperties {
     }
 
     fn add_diff_rule(&mut self, head: Tree, argnum: usize, func: PySubsFunc) {
-        self.diff_properties.diff_rules.insert((head, argnum), func.subs_func);
+        self.diff_properties
+            .diff_rules
+            .insert((head, argnum), func.subs_func);
     }
 
     #[getter]
@@ -1027,7 +1035,11 @@ impl PyDiffProperties {
 
 #[pyfunction(name = "topological_sort")]
 #[pyo3(signature = (expression, heads=false, exclude=None))]
-fn topological_sort_py(expression: PyTree, heads: bool, exclude: Option<FnvHashSet<Tree>>) -> Vec<Tree> {
+fn topological_sort_py(
+    expression: PyTree,
+    heads: bool,
+    exclude: Option<FnvHashSet<Tree>>,
+) -> Vec<Tree> {
     topological_sort(expression.tree, heads, exclude)
 }
 
