@@ -194,6 +194,13 @@ impl Tree {
         Tree { node }
     }
 
+    fn call<I>(&self, args: I) -> Tree
+    where
+        I: IntoIterator<Item = Tree>,
+    {
+        Tree::from_children(once(self.clone()).chain(args))
+    }
+
     fn children(&self) -> Vec<Tree> {
         match &*self.node {
             TreeNode::Node(children) => children.clone(),
@@ -261,63 +268,6 @@ impl DiffProperties {
         let diff_rules = FnvHashMap::default();
         DiffProperties { zero, one, add, mul, distributive, diff_rules }
     }
-}
-
-fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Vec<Vec<usize>>) {
-
-    let num_args = args.len();
-    let args_set = FnvHashSet::from_iter(args.clone());
-
-    let subexpressions = topological_sort(expr.clone(), true, Some(args_set));
-
-    let mut atoms = Vec::new();
-    let mut nodes = Vec::new();
-    let mut has_args = FnvHashSet::from_iter(args.clone());
-    let mut node_children = FnvHashSet::default();
-
-    for subexpr in subexpressions {
-        let children = subexpr.children();
-        if children.is_empty() {
-            atoms.push(subexpr);
-        }
-        else {
-            let children_set = FnvHashSet::from_iter(children);
-            if children_set.is_disjoint(&has_args) {
-                // This node does not have args among its (in)direct children. We treat it as
-                // atomic for the purposes of rebuilding the expression.
-                atoms.push(subexpr);
-            }
-            else {
-                // This does have args so we cannot rebuild it ahead of time. Push to the nodes
-                // stack.
-                has_args.insert(subexpr.clone());
-                node_children.extend(children_set);
-                nodes.push(subexpr);
-            }
-        }
-    }
-
-    if !atoms.is_empty() && nodes.is_empty() {
-        // We get here if expr does not contain args.
-        atoms = vec![expr];
-    }
-    else {
-        // Prune atoms that are not a child of any node.
-        atoms = atoms.into_iter().filter(|x| node_children.contains(x)).collect();
-    }
-
-    let num_args_atoms = num_args + atoms.len();
-    let args_atoms = args.iter().chain(atoms.iter()).map(|x| x.clone());
-    let mut indices: FnvHashMap<Tree, usize> = args_atoms.zip(0..num_args_atoms).collect();
-
-    let mut operations = vec![];
-    for (index, node) in nodes.into_iter().enumerate() {
-        let child_indices = node.children().iter().map(|x| indices.get(&x).unwrap().clone()).collect();
-        operations.push(child_indices);
-        indices.insert(node, index + num_args_atoms);
-    }
-
-    (num_args, atoms, operations)
 }
 
 // ---------------------------------------------- Repr (__repr__)
@@ -510,6 +460,143 @@ fn forward_graph(expr: Tree) -> ForwardGraph {
     }
 
     ForwardGraph::new(atoms, heads, operations)
+}
+
+fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Vec<Vec<usize>>) {
+
+    let num_args = args.len();
+    let args_set = FnvHashSet::from_iter(args.clone());
+
+    let subexpressions = topological_sort(expr.clone(), true, Some(args_set));
+
+    let mut atoms = Vec::new();
+    let mut nodes = Vec::new();
+    let mut has_args = FnvHashSet::from_iter(args.clone());
+    let mut node_children = FnvHashSet::default();
+
+    for subexpr in subexpressions {
+        let children = subexpr.children();
+        if children.is_empty() {
+            atoms.push(subexpr);
+        }
+        else {
+            let children_set = FnvHashSet::from_iter(children);
+            if children_set.is_disjoint(&has_args) {
+                // This node does not have args among its (in)direct children. We treat it as
+                // atomic for the purposes of rebuilding the expression.
+                atoms.push(subexpr);
+            }
+            else {
+                // This does have args so we cannot rebuild it ahead of time. Push to the nodes
+                // stack.
+                has_args.insert(subexpr.clone());
+                node_children.extend(children_set);
+                nodes.push(subexpr);
+            }
+        }
+    }
+
+    if !atoms.is_empty() && nodes.is_empty() {
+        // We get here if expr does not contain args.
+        atoms = vec![expr];
+    }
+    else {
+        // Prune atoms that are not a child of any node.
+        atoms = atoms.into_iter().filter(|x| node_children.contains(x)).collect();
+    }
+
+    let num_args_atoms = num_args + atoms.len();
+    let args_atoms = args.iter().chain(atoms.iter()).map(|x| x.clone());
+    let mut indices: FnvHashMap<Tree, usize> = args_atoms.zip(0..num_args_atoms).collect();
+
+    let mut operations = vec![];
+    for (index, node) in nodes.into_iter().enumerate() {
+        let child_indices = node.children().iter().map(|x| indices.get(&x).unwrap().clone()).collect();
+        operations.push(child_indices);
+        indices.insert(node, index + num_args_atoms);
+    }
+
+    (num_args, atoms, operations)
+}
+
+fn diff_forward(expression: Tree, sym: Tree, prop: &DiffProperties) -> Tree {
+
+    let graph = forward_graph(expression);
+
+    let mut stack = graph.atoms.clone();
+    let mut diff_stack = Vec::with_capacity(stack.len());
+    for (i, atom) in stack.iter().enumerate() {
+        if *atom == sym {
+            diff_stack[i] = prop.one.clone();
+        }
+        else {
+            diff_stack[i] = prop.zero.clone();
+        }
+    }
+
+    for (func, indices) in graph.operations {
+        let mut args = Vec::with_capacity(indices.len());
+        let mut diff_args = Vec::with_capacity(indices.len());
+        for i in indices {
+            args.push(stack[i].clone());
+            diff_args.push(diff_stack[i].clone());
+        }
+
+        let mut diff_terms = Vec::with_capacity(diff_args.len());
+
+        if prop.distributive.contains(&func) {
+            // Distributive rule f(x, y)' = f(x', y')
+            diff_terms.push(func.call(diff_args));
+        }
+        else if diff_args.clone().into_iter().all(|a| a == prop.zero) {
+            // This expression does not depend on sym at all. This will return zero but it is not
+            // clear that the expression is a number so zero may be incorrect.
+            ();
+        }
+        else if func == prop.add {
+            diff_terms.extend(diff_args.into_iter().filter(|a| *a != prop.zero));
+        }
+        else if func == prop.mul {
+            // Product rule
+            for (i, da) in diff_args.into_iter().enumerate() {
+                if da != prop.zero {
+                    let mut new_args = args.clone();
+                    new_args[i] = da;
+                    let term = prop.mul.call(new_args);
+                    diff_terms.push(term);
+                }
+            }
+        }
+        else {
+            // Chain rule
+            for (i, diff_arg) in diff_args.into_iter().enumerate() {
+                if diff_arg != prop.zero {
+                    let pdiff = prop.diff_rules.get(&(func.clone(), i)).unwrap();
+                    let mut diff_term = pdiff.call(args.clone());
+                    if diff_arg != prop.one {
+                        diff_term = prop.mul.call(vec![diff_term, diff_arg]);
+                    }
+                    diff_terms.push(diff_term);
+                }
+            }
+        }
+
+        let expr = func.call(args);
+
+        // Peel off zero or one arg Adds
+        let derivative = if diff_terms.len() == 0 {
+            prop.zero.clone()
+        } else if diff_terms.len() == 1 {
+            diff_terms[0].clone()
+        } else {
+            prop.add.call(diff_terms)
+        };
+
+        stack.push(expr);
+        diff_stack.push(derivative);
+    }
+
+    stack.last().unwrap().clone()
 }
 
 // --------------------------------------------- AtomValue <--> Python
@@ -746,9 +833,8 @@ impl PyTree {
     #[pyo3(signature = (*args))]
     fn __call__(&self, args: &PyTuple, py: Python<'_>) -> PyResult<PyObject> {
         let args: Vec<PyTree> = args.extract()?;
-        let args = args.into_iter().map(|x| x.tree);
-        let children = once(self.tree.clone()).chain(args);
-        let tree = Tree::from_children(children.map(|x| x.clone()));
+        let args = args.into_iter().map(|x| x.tree.clone());
+        let tree = self.tree.call(args);
         Ok(tree.into_py(py))
     }
 
@@ -964,6 +1050,11 @@ fn forward_graph_py(expression: PyTree) -> PyForwardGraph {
     PyForwardGraph::from_forward_graph(graph)
 }
 
+#[pyfunction(name = "diff_forward")]
+fn diff_forward_py(expression: Tree, sym: Tree, prop: &PyDiffProperties) -> Tree {
+    diff_forward(expression, sym, &prop.diff_properties)
+}
+
 // ------------------------------- Initialise the module object.
 
 #[pymodule]
@@ -978,5 +1069,6 @@ fn rust_protosym(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(topological_sort_py, m)?)?;
     m.add_function(wrap_pyfunction!(topological_split_py, m)?)?;
     m.add_function(wrap_pyfunction!(forward_graph_py, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_forward_py, m)?)?;
     Ok(())
 }
