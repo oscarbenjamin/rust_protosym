@@ -11,11 +11,14 @@
 //    Tree
 //    Tr (alias for Tree.atom)
 //    ForwardGraph
+//    SubsFunc
+//    DiffProperties
 //
 // Functions
 //    topological_sort
 //    topological_split
 //    forward_graph
+//    diff_forward
 //
 // For now the Rust code can only handle Atoms with an internal value that is a
 // string or an integer and also for integers it only uses 64 bit signed
