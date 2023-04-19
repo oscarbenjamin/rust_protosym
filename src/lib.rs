@@ -92,6 +92,7 @@ struct ForwardGraph {
     operations: Vec<(Tree, Vec<usize>)>,
 }
 
+#[derive(Clone)]
 struct SubsFunc {
     nargs: usize,
     atoms: Vec<Tree>,
@@ -134,8 +135,14 @@ struct PyForwardGraph {
 }
 
 #[pyclass(name = "SubsFunc")]
+#[derive(Clone)]
 struct PySubsFunc {
     subs_func: SubsFunc,
+}
+
+#[pyclass(name = "DiffProperties")]
+struct PyDiffProperties {
+    diff_properties: DiffProperties,
 }
 
 // ---------------------------------------- Construct Interned Tree
@@ -240,6 +247,19 @@ impl SubsFunc {
         };
 
         stack.last().unwrap().clone()
+    }
+}
+
+impl DiffProperties {
+    fn from_ring_props (
+        zero: Tree,
+        one: Tree,
+        add: Tree,
+        mul: Tree,
+    ) -> DiffProperties {
+        let distributive = FnvHashSet::default();
+        let diff_rules = FnvHashMap::default();
+        DiffProperties { zero, one, add, mul, distributive, diff_rules }
     }
 }
 
@@ -833,6 +853,12 @@ impl PySubsFunc {
     }
 }
 
+impl IntoPy<PyObject> for SubsFunc {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        PySubsFunc::from_subs_func(self).into_py(py)
+    }
+}
+
 #[pymethods]
 impl PySubsFunc {
     #[new]
@@ -868,6 +894,59 @@ impl PySubsFunc {
     }
 }
 
+impl PyDiffProperties {
+    fn from_diff_properties(diff_properties: DiffProperties) -> PyDiffProperties {
+        PyDiffProperties { diff_properties }
+    }
+}
+
+#[pymethods]
+impl PyDiffProperties {
+    #[new]
+    fn py_new(zero: Tree, one: Tree, add: Tree, mul: Tree) -> PyDiffProperties {
+        let diff_properties = DiffProperties::from_ring_props(zero, one, add, mul);
+        PyDiffProperties::from_diff_properties(diff_properties)
+    }
+
+    fn add_distributive(&mut self, head: Tree) {
+        self.diff_properties.distributive.insert(head);
+    }
+
+    fn add_diff_rule(&mut self, head: Tree, argnum: usize, func: PySubsFunc) {
+        self.diff_properties.diff_rules.insert((head, argnum), func.subs_func);
+    }
+
+    #[getter]
+    fn zero(&self) -> Tree {
+        self.diff_properties.zero.clone()
+    }
+
+    #[getter]
+    fn one(&self) -> Tree {
+        self.diff_properties.one.clone()
+    }
+
+    #[getter]
+    fn add(&self) -> Tree {
+        self.diff_properties.add.clone()
+    }
+
+    #[getter]
+    fn mul(&self) -> Tree {
+        self.diff_properties.mul.clone()
+    }
+
+    #[getter]
+    fn distributive(&self) -> FnvHashSet<Tree> {
+        self.diff_properties.distributive.clone()
+    }
+
+    #[getter]
+    fn diff_rules(&self) -> FnvHashMap<(Tree, usize), SubsFunc> {
+        self.diff_properties.diff_rules.clone()
+    }
+}
+
 #[pyfunction(name = "topological_sort")]
 #[pyo3(signature = (expression, heads=false, exclude=None))]
 fn topological_sort_py(expression: PyTree, heads: bool, exclude: Option<FnvHashSet<Tree>>) -> Vec<Tree> {
@@ -895,6 +974,7 @@ fn rust_protosym(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tree_atom, m)?)?; // Tr
     m.add_class::<PyForwardGraph>()?;
     m.add_class::<PySubsFunc>()?;
+    m.add_class::<PyDiffProperties>()?;
     m.add_function(wrap_pyfunction!(topological_sort_py, m)?)?;
     m.add_function(wrap_pyfunction!(topological_split_py, m)?)?;
     m.add_function(wrap_pyfunction!(forward_graph_py, m)?)?;
