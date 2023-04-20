@@ -40,8 +40,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use pyo3::types::PyType;
 
-use fnv::{FnvHashMap, FnvHashSet};
-use internment::Intern; // ArcIntern
+use fnv;
+use internment;
 
 // ---- The type of values held in an Atom is AtomValue
 
@@ -71,6 +71,8 @@ enum TreeNode {
     Node(Vec<Tree>),
 }
 
+type InternedTreeNode = internment::ArcIntern<TreeNode>;
+
 // ------------------- The public rust level structs
 
 #[derive(PartialEq, Eq, Hash, Clone)]
@@ -85,13 +87,16 @@ struct Atom {
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct Tree {
-    node: Intern<TreeNode>,
+    node: InternedTreeNode,
 }
+
+type TreeSet = fnv::FnvHashSet<Tree>;
+type TreeIndexMap = fnv::FnvHashMap<Tree, usize>;
 
 #[derive(PartialEq, Eq, Clone)]
 struct ForwardGraph {
     atoms: Vec<Tree>,
-    heads: FnvHashSet<Tree>,
+    heads: TreeSet,
     operations: Vec<(Tree, Vec<usize>)>,
 }
 
@@ -102,13 +107,15 @@ struct SubsFunc {
     operations: Vec<Vec<usize>>,
 }
 
+type DiffRuleMap = fnv::FnvHashMap<(Tree, usize), SubsFunc>;
+
 struct DiffProperties {
     zero: Tree,
     one: Tree,
     add: Tree,
     mul: Tree,
-    distributive: FnvHashSet<Tree>,
-    diff_rules: FnvHashMap<(Tree, usize), SubsFunc>,
+    distributive: TreeSet,
+    diff_rules: DiffRuleMap,
 }
 
 // ------------------- Structs for the Python objects
@@ -184,7 +191,7 @@ impl Atom {
 
 impl Tree {
     fn from_atom(atom: Atom) -> Tree {
-        let node = Intern::new(TreeNode::Atom(atom));
+        let node = InternedTreeNode::new(TreeNode::Atom(atom));
         Tree { node }
     }
 
@@ -193,7 +200,7 @@ impl Tree {
         I: IntoIterator<Item = Tree>,
     {
         let children = children.into_iter().collect();
-        let node = Intern::new(TreeNode::Node(children));
+        let node = InternedTreeNode::new(TreeNode::Node(children));
         Tree { node }
     }
 
@@ -213,11 +220,7 @@ impl Tree {
 }
 
 impl ForwardGraph {
-    fn new(
-        atoms: Vec<Tree>,
-        heads: FnvHashSet<Tree>,
-        operations: Vec<(Tree, Vec<usize>)>,
-    ) -> ForwardGraph {
+    fn new(atoms: Vec<Tree>, heads: TreeSet, operations: Vec<(Tree, Vec<usize>)>) -> ForwardGraph {
         ForwardGraph {
             atoms,
             heads,
@@ -258,8 +261,8 @@ impl SubsFunc {
 
 impl DiffProperties {
     fn from_ring_props(zero: Tree, one: Tree, add: Tree, mul: Tree) -> DiffProperties {
-        let distributive = FnvHashSet::default();
-        let diff_rules = FnvHashMap::default();
+        let distributive = TreeSet::default();
+        let diff_rules = DiffRuleMap::default();
         DiffProperties {
             zero,
             one,
@@ -353,7 +356,7 @@ impl fmt::Display for Tree {
 
 // --------------------------------------------- algorithms
 
-fn topological_sort(expression: Tree, heads: bool, exclude: Option<FnvHashSet<Tree>>) -> Vec<Tree> {
+fn topological_sort(expression: Tree, heads: bool, exclude: Option<TreeSet>) -> Vec<Tree> {
     let reverse_pop_head = |children: &mut Vec<Tree>| {
         children.reverse();
         if !heads {
@@ -361,7 +364,7 @@ fn topological_sort(expression: Tree, heads: bool, exclude: Option<FnvHashSet<Tr
         }
     };
 
-    let mut seen = FnvHashSet::default();
+    let mut seen = TreeSet::default();
     if let Some(exclude) = exclude {
         seen.extend(exclude);
     }
@@ -418,11 +421,11 @@ fn topological_sort(expression: Tree, heads: bool, exclude: Option<FnvHashSet<Tr
     expressions
 }
 
-fn topological_split(expr: Tree) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
+fn topological_split(expr: Tree) -> (Vec<Tree>, TreeSet, Vec<Tree>) {
     let subexpressions = topological_sort(expr, false, None);
 
     let mut atoms = vec![];
-    let mut heads = FnvHashSet::default();
+    let mut heads = TreeSet::default();
     let mut nodes = vec![];
 
     for subexpr in subexpressions {
@@ -443,7 +446,7 @@ fn forward_graph(expr: Tree) -> ForwardGraph {
     let num_atoms = atoms.len();
 
     let mut operations = Vec::with_capacity(atoms.len() + nodes.len());
-    let mut indices: FnvHashMap<Tree, usize> = FnvHashMap::default();
+    let mut indices = TreeIndexMap::default();
 
     for (index, atom) in atoms.iter().enumerate() {
         indices.insert(atom.clone(), index);
@@ -465,21 +468,21 @@ fn forward_graph(expr: Tree) -> ForwardGraph {
 
 fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Vec<Vec<usize>>) {
     let num_args = args.len();
-    let args_set = FnvHashSet::from_iter(args.clone());
+    let args_set = TreeSet::from_iter(args.clone());
 
     let subexpressions = topological_sort(expr.clone(), true, Some(args_set));
 
     let mut atoms = Vec::new();
     let mut nodes = Vec::new();
-    let mut has_args = FnvHashSet::from_iter(args.clone());
-    let mut node_children = FnvHashSet::default();
+    let mut has_args = TreeSet::from_iter(args.clone());
+    let mut node_children = TreeSet::default();
 
     for subexpr in subexpressions {
         let children = subexpr.children();
         if children.is_empty() {
             atoms.push(subexpr);
         } else {
-            let children_set = FnvHashSet::from_iter(children);
+            let children_set = TreeSet::from_iter(children);
             if children_set.is_disjoint(&has_args) {
                 // This node does not have args among its (in)direct children. We treat it as
                 // atomic for the purposes of rebuilding the expression.
@@ -507,7 +510,7 @@ fn make_function_evaluator(expr: Tree, args: Vec<Tree>) -> (usize, Vec<Tree>, Ve
 
     let num_args_atoms = num_args + atoms.len();
     let args_atoms = args.iter().chain(atoms.iter()).map(|x| x.clone());
-    let mut indices: FnvHashMap<Tree, usize> = args_atoms.zip(0..num_args_atoms).collect();
+    let mut indices: TreeIndexMap = args_atoms.zip(0..num_args_atoms).collect();
 
     let mut operations = vec![];
     for (index, node) in nodes.into_iter().enumerate() {
@@ -903,7 +906,7 @@ impl PyForwardGraph {
     #[new]
     fn new(
         atoms: Vec<Tree>,
-        heads: FnvHashSet<Tree>,
+        heads: TreeSet,
         operations: Vec<(Tree, Vec<usize>)>,
     ) -> PyForwardGraph {
         let graph = ForwardGraph::new(atoms, heads, operations);
@@ -916,7 +919,7 @@ impl PyForwardGraph {
     }
 
     #[getter]
-    fn heads(&self) -> FnvHashSet<Tree> {
+    fn heads(&self) -> TreeSet {
         self.forward_graph.heads.clone()
     }
 
@@ -1026,28 +1029,24 @@ impl PyDiffProperties {
     }
 
     #[getter]
-    fn distributive(&self) -> FnvHashSet<Tree> {
+    fn distributive(&self) -> TreeSet {
         self.diff_properties.distributive.clone()
     }
 
     #[getter]
-    fn diff_rules(&self) -> FnvHashMap<(Tree, usize), SubsFunc> {
+    fn diff_rules(&self) -> DiffRuleMap {
         self.diff_properties.diff_rules.clone()
     }
 }
 
 #[pyfunction(name = "topological_sort")]
 #[pyo3(signature = (expression, heads=false, exclude=None))]
-fn topological_sort_py(
-    expression: PyTree,
-    heads: bool,
-    exclude: Option<FnvHashSet<Tree>>,
-) -> Vec<Tree> {
+fn topological_sort_py(expression: PyTree, heads: bool, exclude: Option<TreeSet>) -> Vec<Tree> {
     topological_sort(expression.tree, heads, exclude)
 }
 
 #[pyfunction(name = "topological_split")]
-fn topological_split_py(expression: PyTree) -> (Vec<Tree>, FnvHashSet<Tree>, Vec<Tree>) {
+fn topological_split_py(expression: PyTree) -> (Vec<Tree>, TreeSet, Vec<Tree>) {
     topological_split(expression.tree)
 }
 
